@@ -1,0 +1,75 @@
+name: Publish Public Wiki
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:       # allows manual trigger from GitHub Actions UI
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -- 1. Checkout the private vault ----------------------------------------
+      - name: Checkout vault
+        uses: actions/checkout@v4
+
+      # -- 2. Filter vault content for public consumption -----------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run public content filter
+        run: python scripts/filter_public.py
+
+      # -- 3. Install Quartz ----------------------------------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Clone Quartz v4
+        run: git clone --depth=1 --branch v4 https://github.com/jackyzha0/quartz.git quartz-build
+
+      - name: Install Quartz dependencies
+        working-directory: quartz-build
+        run: npm ci
+
+      # -- 4. Copy filtered content into Quartz ---------------------------------
+      - name: Copy filtered content into Quartz
+        run: |
+          rm -rf quartz-build/content/*
+          cp -r public-content/. quartz-build/content/
+
+      # -- 5. Configure Quartz site title and Explorer --------------------------
+      # UPDATE THIS: replace "My Campaign Wiki" with your campaign name
+      - name: Patch Quartz site title
+        run: |
+          sed -i 's/pageTitle: "Quartz 4"/pageTitle: "My Campaign Wiki"/' \
+            quartz-build/quartz.config.ts || true
+
+      - name: Patch Quartz Explorer -- open folders by default
+        run: |
+          sed -i 's/Component\.Explorer()/Component.Explorer({ folderDefaultState: "open", folderClickBehavior: "link" })/' \
+            quartz-build/quartz.layout.ts || true
+          sed -i 's/Component\.Explorer({/Component.Explorer({ folderDefaultState: "open", folderClickBehavior: "link",/' \
+            quartz-build/quartz.layout.ts || true
+
+      # -- 6. Build the static site ---------------------------------------------
+      - name: Build Quartz site
+        working-directory: quartz-build
+        run: npx quartz build
+
+      # -- 7. Deploy built site to the public wiki repo -------------------------
+      # UPDATE THIS: replace YOUR-USERNAME/your-campaign-wiki with your wiki repo
+      - name: Deploy to public wiki repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.WIKI_DEPLOY_TOKEN }}
+          external_repository: YOUR-USERNAME/your-campaign-wiki
+          publish_dir: quartz-build/public
+          publish_branch: gh-pages
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "wiki: auto-publish from private vault"
